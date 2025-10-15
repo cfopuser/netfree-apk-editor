@@ -13,7 +13,9 @@ this script reuierd java instalation.
 <img width="360" height="360" alt="image" src="https://github.com/user-attachments/assets/31353710-2fd2-4021-9866-e90242e7a548" />
 
 
-עבור מי שרוצה לבנות את הסקריפט תריך להכליל בworking directory את הקבצים `apktool.jar` `zipalign.exe` `keytool.exe` את ה קונפיג של הנרשת ו `apksigner.jar`.
-וכמובן להתקין את `requirements.txt` 
+עבור מי שרוצה לבנות את הסקריפט תריך להכליל בworking directory את הקבצים `apktool.jar` ,`zipalign.exe` ,`keytool.exe`, `apksigner.jar`, ו `network_security_config.xml`.
+וכמובן להתקין את `requirements.txt`
+
+pyinstaller כדי לבנות.
 
 
