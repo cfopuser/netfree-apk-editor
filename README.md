@@ -25,7 +25,6 @@ python -m PyInstaller
 --icon="apk.ico"
 --add-data "apksigner.jar:."
 --add-data "apktool.jar:."
---add-data "keytool.exe:."
 --add-data "zipalign.exe:."
 --add-data "network_security_config.xml:."
 --add-data "apk.ico:."
