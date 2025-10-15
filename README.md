@@ -10,7 +10,7 @@ this script reuierd java instalation.
 
 
 
-<img width="360" height="360" alt="image" src="https://github.com/user-attachments/assets/31353710-2fd2-4021-9866-e90242e7a548" />
+
 
 
 עבור מי שרוצה לבנות את הסקריפט שיוריד את הrepo יתקין את `requirements.txt`.
@@ -33,3 +33,7 @@ python -m PyInstaller
 ```
 
 או עם קובץ ידני מה שנוח לכם תהנו.
+
+
+
+<img width="360" height="420" alt="image" src="https://github.com/user-attachments/assets/e6af9683-b644-43b9-b988-33e210ea6d4d" />
