@@ -14,12 +14,12 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QFileDialog, QLabel, QCheckBox,
                              QPlainTextEdit, QMessageBox, QFrame, QLineEdit,
                              QDialog, QStyle, QProgressBar)
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl, QTimer 
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl, QTimer
 from PyQt6.QtGui import QIcon, QMovie, QDesktopServices, QTextCursor
 
 # --- Application Constants ---
-VERSION = "1.3" 
-CONFIG_FILE = "config.json" 
+VERSION = "1.3"
+CONFIG_FILE = "config.json"
 
 def get_base_path():
     """
@@ -35,7 +35,7 @@ def get_base_path():
 
 # --- Worker Threads ---
 
-class UpdateCheckThread(QThread):    
+class UpdateCheckThread(QThread):
     update_available = pyqtSignal(str, str)
     update_check_failed = pyqtSignal(str)
 
@@ -60,13 +60,14 @@ class UpdateCheckThread(QThread):
 class PatcherThread(QThread):
     progress_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
-    process_finished = pyqtSignal(bool, str)
+    # MODIFIED: Signal now includes the final path string
+    process_finished = pyqtSignal(bool, str, str)
 
     def __init__(self, apk_file, make_debuggable, keystore_path, key_alias, key_pass, base_path):
         super().__init__()
         self.apk_file = Path(apk_file)
         self.make_debuggable = make_debuggable
-        self.script_dir = get_base_path()
+        self.script_dir = Path(__file__).parent.resolve()
         self.output_dir = Path(base_path)
 
         if keystore_path:
@@ -83,12 +84,16 @@ class PatcherThread(QThread):
         """Runs a command, captures output, and raises a detailed exception on failure."""
         try:
             startupinfo = None
+            creationflags = 0
             if sys.platform == 'win32':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                creationflags = subprocess.CREATE_NO_WINDOW
+
             process = subprocess.run(
                 command, check=True, text=True, capture_output=True,
-                startupinfo=startupinfo
+                startupinfo=startupinfo,
+                creationflags=creationflags
             )
             if process.stdout: self.log_message.emit(process.stdout)
             if process.stderr: self.log_message.emit(f"STDERR: {process.stderr}")
@@ -190,10 +195,78 @@ class PatcherThread(QThread):
                 except OSError as e: self.log_message.emit(f"שגיאה במחיקת תיקייה זמנית: {e}")
 
 
+class DeepEditThread(QThread):
+    log_message = pyqtSignal(str)
+
+    process_finished = pyqtSignal(bool, str, str)
+
+    def __init__(self, apk_file, base_path):
+        super().__init__()
+        self.apk_file = Path(apk_file)
+        self.base_path = Path(base_path)
+
+    def run(self):
+        self.script_dir = Path(__file__).parent.resolve()
+        apk_mitm_path = self.script_dir / "apk-mitm.exe"
+        # apk-mitm creates the output file in the same directory as the input file
+        final_apk_path = self.apk_file.parent / f"{self.apk_file.stem}-patched.apk"
+
+        try:
+            if not apk_mitm_path.exists():
+                raise FileNotFoundError(f"קובץ 'apk-mitm.exe' לא נמצא בתיקיית התוכנה.\nודא שהוא קיים בנתיב: {apk_mitm_path}")
+
+            self.log_message.emit(f"--- מתחיל עריכה עמוקה עם apk-mitm על {self.apk_file.name} ---")
+
+            startupinfo = None
+            creationflags = 0
+            if sys.platform == 'win32':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                creationflags = subprocess.CREATE_NO_WINDOW
+
+            command = [str(apk_mitm_path), str(self.apk_file)]
+            self.log_message.emit(f"מריץ פקודה: {' '.join(command)}")
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
+
+            # Stream output in real-time
+            for line in iter(process.stdout.readline, ''):
+                self.log_message.emit(line.strip())
+
+            process.stdout.close()
+            return_code = process.wait()
+
+            if return_code == 0 and final_apk_path.exists():
+                self.log_message.emit("--- עריכה עמוקה הסתיימה בהצלחה ---")
+                success_message = f"הצלחה! קובץ APK מתוקן נוצר בנתיב:\n{final_apk_path}"
+                # MODIFIED: Emit the final path on success
+                self.process_finished.emit(True, success_message, str(final_apk_path))
+            else:
+                self.log_message.emit(f"--- apk-mitm סיים עם קוד שגיאה: {return_code} ---")
+                error_msg = ("העריכה העמוקה נכשלה. ודא ש-mitmproxy מותקן כראוי (`pip install mitmproxy`) ונסה שוב.\n"
+                             "בדוק ביומן למעלה הודעות שגיאה מפורטות מ-apk-mitm.")
+                # MODIFIED: Emit an empty path on failure
+                self.process_finished.emit(False, error_msg, "")
+
+        except Exception as e:
+            self.log_message.emit(f"\n--- אירעה שגיאה קריטית ---\n{e}")
+            # MODIFIED: Emit an empty path on failure
+            self.process_finished.emit(False, "העריכה העמוקה נכשלה עקב שגיאה פנימית. בדוק את היומן לפרטים.", "")
+
+
 # --- UI Classes ---
 
 class UpdateDialog(QDialog):
-    
+    # ... [This class remains unchanged] ...
     def __init__(self, current_version, new_version, url, parent=None):
         super().__init__(parent)
         self.url = url
@@ -249,7 +322,6 @@ class UpdateDialog(QDialog):
             #actionButton:hover { background-color: #9c27b0; }
         """)
 
-
 class App(QWidget):
     def __init__(self):
         super().__init__()
@@ -260,6 +332,8 @@ class App(QWidget):
         # State variables
         self.selected_apk_path = ""
         self.selected_keystore_path = ""
+        # NEW: Store the path of the last successful output file
+        self.last_output_path = ""
         self.start_time = 0 # To store the start time of the process
 
        #  Setup the QTimer for the stopwatch
@@ -269,19 +343,18 @@ class App(QWidget):
         # Main window setup
         self.setWindowTitle("Netfree APK Patcher")
         self.setWindowIcon(QIcon(str(self.script_dir / "apk.ico")))
-        self.setGeometry(100, 100, 650, 820) # Slightly increased height for timer
+        self.setGeometry(100, 100, 650, 820)
         self.setAcceptDrops(True)
 
         # Initialize UI components and perform startup checks
         self.init_ui()
         self.apply_stylesheet()
-        
         self.load_settings()
-        
         self.check_dependencies()
         self.check_for_updates()
 
     # --- Configuration Methods ---
+    # ... [load_settings, save_settings remain the same] ...
     def load_settings(self):
         config_path = self.base_path / CONFIG_FILE
         if config_path.exists():
@@ -297,6 +370,8 @@ class App(QWidget):
                     self.clear_keystore_selection()
                 self.ks_alias_input.setText(settings.get('key_alias', ''))
                 self.debug_checkbox.setChecked(settings.get('make_debuggable', False))
+                self.deep_edit_checkbox.setChecked(settings.get('use_deep_edit', False))
+                self.update_advanced_options_state(self.deep_edit_checkbox.isChecked())
                 self.append_log_message("הגדרות נטענו מקובץ config.json.", 'info')
             except Exception as e:
                 self.append_log_message(f"שגיאה בטעינת הגדרות: {e}", 'error')
@@ -305,7 +380,8 @@ class App(QWidget):
         settings = {
             'keystore_path': self.selected_keystore_path,
             'key_alias': self.ks_alias_input.text(),
-            'make_debuggable': self.debug_checkbox.isChecked()
+            'make_debuggable': self.debug_checkbox.isChecked(),
+            'use_deep_edit': self.deep_edit_checkbox.isChecked()
         }
         config_path = self.base_path / CONFIG_FILE
         try:
@@ -315,6 +391,7 @@ class App(QWidget):
             print(f"Warning: Could not save configuration file: {e}")
 
     # --- Qt Event Overrides ---
+    # ... [closeEvent, dragEnterEvent, dropEvent remain the same] ...
     def closeEvent(self, event):
         self.save_settings()
         event.accept()
@@ -330,7 +407,8 @@ class App(QWidget):
         file_path = event.mimeData().urls()[0].toLocalFile()
         self.set_apk_file(file_path)
 
-    # --- Added timer label to UI ---
+    # --- UI Initialization ---
+    # ... [init_ui and its sub-methods remain mostly the same] ...
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(25, 25, 25, 25)
@@ -338,11 +416,11 @@ class App(QWidget):
         title = QLabel("עורך APK עבור נטפרי")
         title.setObjectName("title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+
         file_card = self.create_card("1. בחירת קובץ APK")
         self.select_button = QPushButton("בחר קובץ APK  📂")
         self.select_button.clicked.connect(self.open_file_dialog)
-        
+
         file_selection_layout = QHBoxLayout()
         self.selected_file_path_label = QLabel("גרור קובץ לכאן או לחץ לבחירה...")
         self.selected_file_path_label.setObjectName("filePath")
@@ -353,16 +431,16 @@ class App(QWidget):
         file_selection_layout.addWidget(self.selected_file_path_label)
         file_selection_layout.addStretch()
         file_selection_layout.addWidget(self.clear_apk_button)
-        
+
         file_card.layout().addWidget(self.select_button)
         file_card.layout().addLayout(file_selection_layout)
-        
+
         self.advanced_toggle_button = QPushButton("אפשרויות מתקדמות ▼")
         self.advanced_toggle_button.setObjectName("toggleButton")
         self.advanced_frame = self.create_advanced_options()
         self.advanced_frame.hide()
         self.advanced_toggle_button.clicked.connect(self.toggle_advanced_options)
-        
+
         action_layout = QHBoxLayout()
         self.patch_button = QPushButton("ערוך את ה-APK")
         self.patch_button.setObjectName("actionButton")
@@ -375,12 +453,17 @@ class App(QWidget):
 
         action_layout.addStretch()
         action_layout.addWidget(self.open_folder_button)
+
         
-        # --- Create and configure the timer label ---
-        self.timer_label = QLabel("00.000")
+        self.timer_box = QFrame()
+        self.timer_box.setObjectName("timerBox")
+        timer_box_layout = QHBoxLayout(self.timer_box)
+        self.timer_label = QLabel("00.00")
+        self.timer_box.setFixedSize(120, 70)
         self.timer_label.setObjectName("timerLabel")
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.timer_label.hide() 
+        timer_box_layout.addWidget(self.timer_label)
+        self.timer_box.hide()
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -393,30 +476,30 @@ class App(QWidget):
         log_label.setObjectName("header")
         self.log_area = QPlainTextEdit()
         self.log_area.setReadOnly(True)
-        
+
         bottom_layout = QHBoxLayout()
         about_text = 'פותח על ידי <a href="https://mitmachim.top/user/cfopuser" style="color: #ab47bc; text-decoration: none;">@cfopuser</a>'
         about_label = QLabel(about_text)
-        about_label.setOpenExternalLinks(True) 
+        about_label.setOpenExternalLinks(True)
         about_label.setObjectName("aboutLabel")
         version_label = QLabel(f"Version {VERSION}")
         version_label.setObjectName("aboutLabel")
         bottom_layout.addWidget(version_label)
         bottom_layout.addStretch()
         bottom_layout.addWidget(about_label)
-        
+
         main_layout.addWidget(title)
         main_layout.addWidget(file_card)
         main_layout.addWidget(self.advanced_toggle_button)
         main_layout.addWidget(self.advanced_frame)
         main_layout.addLayout(action_layout)
-        main_layout.addWidget(self.timer_label) 
+        main_layout.addWidget(self.timer_box) # Add the timer box to the layout
         main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(log_label)
         main_layout.addWidget(self.log_area)
         main_layout.addLayout(bottom_layout)
 
-    def create_card(self, title_text):       
+    def create_card(self, title_text):
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
@@ -434,11 +517,11 @@ class App(QWidget):
         layout.setSpacing(15)
         self.debug_checkbox = QCheckBox("הפוך את היישום לניתן לניפוי באגים (debuggable)")
         layout.addWidget(self.debug_checkbox)
-        
+
         keystore_title = QLabel("קובץ חתימה (Keystore)")
         keystore_title.setObjectName("subheader")
         layout.addWidget(keystore_title)
-        
+
         self.keystore_select_button = QPushButton("בחר קובץ חתימה קיים...")
         self.keystore_select_button.clicked.connect(self.select_keystore_file)
         layout.addWidget(self.keystore_select_button)
@@ -462,7 +545,7 @@ class App(QWidget):
         ks_alias_layout.addWidget(ks_alias_label)
         ks_alias_layout.addWidget(self.ks_alias_input)
         layout.addLayout(ks_alias_layout)
-        
+
         ks_pass_layout = QHBoxLayout()
         ks_pass_label = QLabel(":סיסמת מפתח")
         self.ks_pass_input = QLineEdit()
@@ -470,6 +553,26 @@ class App(QWidget):
         ks_pass_layout.addWidget(ks_pass_label)
         ks_pass_layout.addWidget(self.ks_pass_input)
         layout.addLayout(ks_pass_layout)
+
+        # --- Separator and Deep Editing option ---
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(separator)
+
+        deep_edit_title = QLabel("עריכה עמוקה (apk-mitm)")
+        deep_edit_title.setObjectName("subheader")
+        layout.addWidget(deep_edit_title)
+
+        self.deep_edit_checkbox = QCheckBox("הפעל עריכה עמוקה, מומלץ במקרים שעריכה רגילה אינה מספקת.")
+        self.deep_edit_checkbox.toggled.connect(self.update_advanced_options_state)
+        layout.addWidget(self.deep_edit_checkbox)
+
+        deep_edit_desc = QLabel(" אפשרות זו מצריכה חיבור פעיל לאינטרנט, ותיקח יותר זמן משמעותית.")
+        deep_edit_desc.setObjectName("filePath")
+        deep_edit_desc.setWordWrap(True)
+        layout.addWidget(deep_edit_desc)
+
         return frame
 
     def toggle_advanced_options(self):
@@ -480,6 +583,27 @@ class App(QWidget):
             self.advanced_toggle_button.setText("אפשרויות מתקדמות ▲")
             self.advanced_frame.show()
 
+    def update_advanced_options_state(self, checked):
+         """Disables and clears normal patching options when deep editing is selected."""
+         is_normal_patching_enabled = not checked
+ 
+         # Disable/Enable controls based on the checkbox state
+         self.debug_checkbox.setEnabled(is_normal_patching_enabled)
+         self.keystore_select_button.setEnabled(is_normal_patching_enabled)
+         self.clear_keystore_button.setEnabled(is_normal_patching_enabled and bool(self.selected_keystore_path))
+         self.ks_alias_input.setEnabled(is_normal_patching_enabled)
+         self.ks_pass_input.setEnabled(is_normal_patching_enabled)
+ 
+         if checked:
+             # When deep editing is selected, clear all other advanced options.
+             self.debug_checkbox.setChecked(False)
+             self.clear_keystore_selection()
+             self.ks_alias_input.clear()
+             self.ks_pass_input.clear()
+             self.patch_button.setText("התחל עריכה עמוקה")
+         else:
+             self.patch_button.setText("ערוך את ה-APK")
+             
     def apply_stylesheet(self):
         self.setStyleSheet("""
             QWidget { background-color: #1e1e1e; color: #f0f0f0; font-family: "Segoe UI", "Arial"; }
@@ -505,33 +629,50 @@ class App(QWidget):
             #aboutLabel { font-size: 11px; color: #888; padding-top: 5px; }
             QProgressBar { border: 1px solid #555; border-radius: 8px; text-align: center; padding: 2px; background-color: #3c3c3c; color: #f0f0f0; font-weight: bold; }
             QProgressBar::chunk { background-color: #ab47bc; border-radius: 7px; }
-            #timerLabel { /* <-- NEW STYLE */
+            
+            /* --- IMPROVEMENT: Styles for the new timer box --- */
+            #timerBox {
+                background-color: #2d2d2d;
+                border: 1px solid #4a4a4a;
+                border-radius: 8px;
+                padding: 5px 0;
+                margin-top: 5px;
+            }
+            #timerLabel {
                 font-family: "Consolas", "Courier New", monospace;
-                font-size: 14px;
-                color: #ccc;
-                padding-bottom: 5px;
+                font-size: 20px;
+                font-weight: bold;
+                color: #e0e0e0;
+                background-color: transparent;
+                border: none;
             }
         """)
 
-    # --- update the timer label ---
     def update_timer_label(self):
-        """Calculates elapsed time and updates the timer label."""
+        # ... [this method is unchanged] ...
         elapsed = time.monotonic() - self.start_time
         seconds = int(elapsed)
-        milliseconds = int((elapsed - seconds) * 1000)
-        self.timer_label.setText(f"{seconds:02d}.{milliseconds:03d}")
+        centiseconds = int((elapsed - seconds) * 100)
+        self.timer_label.setText(f"{seconds:02d}.{centiseconds:02d}")
 
     def set_controls_enabled(self, enabled):
+        # ... [this method is unchanged] ...
         self.select_button.setEnabled(enabled)
         self.clear_apk_button.setEnabled(enabled and bool(self.selected_apk_path))
         self.advanced_toggle_button.setEnabled(enabled)
-        self.debug_checkbox.setEnabled(enabled)
-        self.keystore_select_button.setEnabled(enabled)
-        self.clear_keystore_button.setEnabled(enabled and bool(self.selected_keystore_path))
-        self.ks_alias_input.setEnabled(enabled)
-        self.ks_pass_input.setEnabled(enabled)
+        self.patch_button.setEnabled(enabled and bool(self.selected_apk_path))
+        self.deep_edit_checkbox.setEnabled(enabled)
+        if enabled:
+            self.update_advanced_options_state(self.deep_edit_checkbox.isChecked())
+        else:
+            self.debug_checkbox.setEnabled(False)
+            self.keystore_select_button.setEnabled(False)
+            self.clear_keystore_button.setEnabled(False)
+            self.ks_alias_input.setEnabled(False)
+            self.ks_pass_input.setEnabled(False)
 
     def check_dependencies(self):
+        # ... [this method is unchanged] ...
         self.append_log_message("בודק תלות ב-Java Development Kit (JDK)...", 'info')
         try:
             startupinfo = None
@@ -548,120 +689,191 @@ class App(QWidget):
             self.patch_button.setEnabled(False)
             self.select_button.setEnabled(False)
 
-    def check_for_updates(self): 
+    def check_for_updates(self):
+        # ... [this method is unchanged] ...
         self.update_thread = UpdateCheckThread()
         self.update_thread.update_available.connect(self.show_update_dialog)
         self.update_thread.update_check_failed.connect(lambda msg: self.append_log_message(f"בדיקת עדכונים: {msg}", 'error'))
         self.update_thread.start()
 
-    def show_update_dialog(self, version, url): 
+    def show_update_dialog(self, version, url):
+        # ... [this method is unchanged] ...
         update_dialog = UpdateDialog(VERSION, version, url, self)
         if update_dialog.exec() == QDialog.DialogCode.Accepted:
             QDesktopServices.openUrl(QUrl(url))
 
-    def open_file_dialog(self): 
-        file_name, _ = QFileDialog.getOpenFileName(self, "בחר קובץ APK", "", "Android Package (*.apk)")
+    def open_file_dialog(self):
+        # ... [this method is unchanged] ...
+        file_name, _ = QFileDialog.getOpenFileName(self, "בחר קובץ APK", "", "Android Package (*.apk *.xapk)")
         if file_name: self.set_apk_file(file_name)
 
-    def set_apk_file(self, file_path): 
+    def set_apk_file(self, file_path):
         self.selected_apk_path = file_path
         self.selected_file_path_label.setText(Path(file_path).name)
         self.patch_button.setEnabled(True)
         self.clear_apk_button.show()
         self.open_folder_button.hide()
+        self.last_output_path = "" # Clear previous result path
 
-    def clear_apk_selection(self): 
+    def clear_apk_selection(self):
+        # ... [this method is unchanged] ...
         self.selected_apk_path = ""
         self.selected_file_path_label.setText("גרור קובץ לכאן או לחץ לבחירה...")
         self.patch_button.setEnabled(False)
         self.clear_apk_button.hide()
+        self.last_output_path = ""
 
-    def select_keystore_file(self): 
+    def select_keystore_file(self):
+        # ... [this method is unchanged] ...
         file_name, _ = QFileDialog.getOpenFileName(self, "בחר קובץ חתימה", "", "Keystore files (*.keystore *.jks)")
         if file_name:
             self.selected_keystore_path = file_name
             self.keystore_path_label.setText(Path(file_name).name)
             self.clear_keystore_button.show()
 
-    def clear_keystore_selection(self): 
+    def clear_keystore_selection(self):
+        # ... [this method is unchanged] ...
         self.selected_keystore_path = ""
         self.keystore_path_label.setText("ברירת מחדל: יצירת debug.keystore אוטומטית")
         self.clear_keystore_button.hide()
 
-    def open_output_folder(self): 
-        path = str(self.base_path)
-        if sys.platform == 'win32': os.startfile(path)
-        elif sys.platform == 'darwin': subprocess.Popen(['open', path])
-        else: subprocess.Popen(['xdg-open', path])
+    # MODIFIED: Reworked logic to be simpler and more robust
+    def open_output_folder(self):
+        """Opens the folder containing the last generated APK."""
+        if not self.last_output_path:
+            # Fallback to base_path if no output path is set
+            path_to_open = self.base_path
+        else:
+            output_path = Path(self.last_output_path)
+            if not output_path.exists():
+                 # Fallback if file was moved/deleted
+                path_to_open = output_path.parent
+            else:
+                 # The primary logic
+                if sys.platform == 'win32':
+                    # On Windows, use 'explorer /select' to highlight the file
+                    subprocess.run(['explorer', '/select,', str(output_path)])
+                    return
+                # For other OSes, just open the parent directory
+                path_to_open = output_path.parent
 
-    # --- Start the timer ---
+        # Cross-platform way to open a directory
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path_to_open)))
+
+
+    # --- Main Process Control ---
     def start_patching(self):
         if not self.selected_apk_path:
             QMessageBox.warning(self, "לא נבחר קובץ", "אנא בחר קובץ APK תחילה.")
             return
 
         self.set_controls_enabled(False)
-        self.patch_button.setEnabled(False)
         self.open_folder_button.hide()
         self.log_area.clear()
-        
+
         # Reset and show progress UI
-        self.timer_label.setText("00.000")
+        self.timer_label.setText("00.00")
         self.progress_bar.setValue(0)
-        self.timer_label.show()
-        self.progress_bar.show()
-        
-        # --- Record start time and start the QTimer ---
+        self.timer_box.show() # Show the container box
+        self.last_output_path = "" # Reset output path
+
         self.start_time = time.monotonic()
         self.timer.start(33) # Update roughly 30 times per second
 
-        self.patcher = PatcherThread(
-            apk_file=self.selected_apk_path,
-            make_debuggable=self.debug_checkbox.isChecked(),
-            keystore_path=self.selected_keystore_path,
-            key_alias=self.ks_alias_input.text(),
-            key_pass=self.ks_pass_input.text(),
-            base_path=self.base_path
-        )
-        self.patcher.log_message.connect(self.append_log_message)
-        self.patcher.progress_updated.connect(self.progress_bar.setValue)
-        self.patcher.process_finished.connect(self.on_patching_finished)
-        self.patcher.start()
+        if self.deep_edit_checkbox.isChecked():
+            self.progress_bar.hide()
+            self.deep_editor = DeepEditThread(
+                apk_file=self.selected_apk_path,
+                base_path=self.base_path
+            )
+            self.deep_editor.log_message.connect(self.append_log_message)
+            self.deep_editor.process_finished.connect(self.on_patching_finished)
+            self.deep_editor.start()
+        else:
+            self.progress_bar.show()
+            self.patcher = PatcherThread(
+                apk_file=self.selected_apk_path,
+                make_debuggable=self.debug_checkbox.isChecked(),
+                keystore_path=self.selected_keystore_path,
+                key_alias=self.ks_alias_input.text(),
+                key_pass=self.ks_pass_input.text(),
+                base_path=self.base_path
+            )
+            self.patcher.log_message.connect(self.append_log_message)
+            self.patcher.progress_updated.connect(self.progress_bar.setValue)
+            self.patcher.process_finished.connect(self.on_patching_finished)
+            self.patcher.start()
 
-    def append_log_message(self, message, message_type=None): 
-        if message_type is None:
-            msg_lower = message.lower()
-            if msg_lower.strip().startswith("--- שלב"): message_type = 'step'
-            elif "הצלחה!" in message or "success" in msg_lower: message_type = 'success'
-            elif "שגיאה" in message or "error" in msg_lower or "נכשל" in msg_lower: message_type = 'error'
-            else: message_type = 'info'
+    # MODIFIED: Major overhaul for better log formatting
+    def append_log_message(self, message, message_type=None):
+        """Parses and appends a styled log message to the log area."""
+        if not message:
+            return
+
+        # Default styles
+        color = '#E0E0E0' # Default info color
+        style = 'margin: 1px 0;'
         
-        color_map = {'step': '#87CEEB', 'success': '#90EE90', 'error': '#F08080', 'info': '#E0E0E0'}
-        color = color_map.get(message_type, color_map['info'])
+        # --- My own application messages ---
+        if message_type == 'step': color = '#87CEEB' # Light blue
+        elif message_type == 'success': color = '#90EE90' # Light green
+        elif message_type == 'error': color = '#F08080' # Light red
+        
+        # --- Parsing apk-mitm output ---
+        else:
+            msg_strip = message.strip()
+            # Major status lines like "[05:28:20] Decoding APK file [started]"
+            if match := re.search(r'\[\d{2}:\d{2}:\d{2}\]\s(.*?)\s\[(started|completed|skipped)\]', msg_strip):
+                action, status = match.groups()
+                status_colors = {'completed': '#90EE90', 'started': '#87CEEB', 'skipped': '#9E9E9E'}
+                color = status_colors.get(status, '#E0E0E0')
+                style += 'font-weight: bold;'
+            # Sub-steps like "→ Using Apktool 2.9.3 on app.apk"
+            elif msg_strip.startswith('→'):
+                color = '#B0B0B0' # Lighter grey for details
+                style += 'margin-left: 15px;'
+            # Successful patch applications
+            elif 'Applied' in message and 'patch' in msg_strip:
+                color = '#4CAF50' # Darker success green
+                style += 'margin-left: 15px; font-weight: bold;'
+            # The final "Done!" message
+            elif 'Done!' in msg_strip:
+                color = '#90EE90'
+                style += 'font-weight: bold;'
+            # The big warning block
+            elif 'WARNING' in msg_strip:
+                color = '#FFD700' # Gold/Yellow
+                style += 'border: 1px solid #FFD700; padding: 5px; margin-top: 5px;'
+            # De-emphasize verbose baksmaling/smaling lines
+            elif 'Baksmaling' in msg_strip or 'Smaling' in msg_strip:
+                color = '#777777' # Dark grey
+                style += 'margin-left: 15px;'
+
+        # Sanitize for HTML and format
         message_html = message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        formatted_message = f'<pre style="color:{color}; margin: 2px; white-space: pre-wrap; word-wrap: break-word;">{message_html}</pre>'
+        formatted_message = f'<pre style="color:{color}; {style} white-space: pre-wrap; word-wrap: break-word;">{message_html}</pre>'
+
         self.log_area.appendHtml(formatted_message)
         self.log_area.moveCursor(QTextCursor.MoveOperation.End)
 
-    # ---  Stop the timer ---
-    def on_patching_finished(self, success, message):
-        # --- Stop the timer and do a final update for accuracy ---
+
+    # MODIFIED: Signature changed to accept the final file path
+    def on_patching_finished(self, success, message, final_path=""):
         self.timer.stop()
-        self.update_timer_label() 
+        self.update_timer_label() # Final update to show the precise end time
 
         self.progress_bar.hide()
         self.set_controls_enabled(True)
-        self.patch_button.setEnabled(True)
-        
+        self.last_output_path = final_path # Store the path for the "open folder" button
+
         self.append_log_message(f"\n{'='*20}", 'info')
         self.append_log_message(message, 'success' if success else 'error')
-        
+
         if success:
             self.open_folder_button.show()
             QMessageBox.information(self, "הצלחה", message)
         else:
-            # Hide the timer on failure to reduce clutter
-            self.timer_label.hide()
+            self.timer_box.hide() # Hide timer on failure
             QMessageBox.critical(self, "כישלון", message)
 
 
