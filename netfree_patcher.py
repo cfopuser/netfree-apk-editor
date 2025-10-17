@@ -18,7 +18,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl, QTimer
 from PyQt6.QtGui import QIcon, QMovie, QDesktopServices, QTextCursor
 
 # --- Application Constants ---
-VERSION = "1.3"
+VERSION = "1.4"
 CONFIG_FILE = "config.json"
 
 def get_base_path():
@@ -179,11 +179,11 @@ class PatcherThread(QThread):
             self.run_command(sign_cmd)
             update_progress()
 
-            self.process_finished.emit(True, f"הצלחה! קובץ APK מתוקן נוצר בנתיב:\n{final_apk_path}")
+            self.process_finished.emit(True, f"הצלחה! קובץ APK מתוקן נוצר בנתיב:\n{final_apk_path}", str(final_apk_path))
 
         except Exception as e:
             self.log_message.emit(f"\n--- אירעה שגיאה ---\n{e}")
-            self.process_finished.emit(False, "התיקון נכשל. בדוק את היומן לפרטים נוספים.")
+            self.process_finished.emit(False, "התיקון נכשל. בדוק את היומן לפרטים נוספים.", "")
 
         finally:
             self.log_message.emit("\n--- שלב 7: מנקה קבצים זמניים ---")
