@@ -1,13 +1,18 @@
 # netfree-apk-editor
-this is a python script designed to edit apk file to support external https certificates
+this is a python script designed to edit apk file to support external ssl certificates
 
+part of this script is based on the [apk-mitm] project.
 this script reuierd java instalation.
 
 --- 
 
 זה הינו סקריפט פייתון שנועד להקל וליעל את תהליך עריכת קבצי apk עבור משתמשי נטפרי.
-עבור סקריפט זה יש להתקין ג'אווה. 
+**
+שימו לב** תוכנה זו מצריכה ג'אווה (jdk לא מספיק jre) מותקנת במידה ולא התקנתם בעבר הורידו [מפה](https://adoptium.net/en-GB/download?link=https%3A%2F%2Fgithub.com%2Fadoptium%2Ftemurin25-binaries%2Freleases%2Fdownload%2Fjdk-25%252B36%2FOpenJDK25U-jdk_x64_windows_hotspot_25_36.msi&vendor=Adoptium)  או [מפה](https://adoptium.net/en-GB/temurin/releases).
 
+**שימו לב** בעת שימוש בתכונה "עריכה עמוקה",
+האנטי וירוס של ווינדוס עלול לזהות זאת כוירוס, זהו זיהוי [מוטעה](https://www.virustotal.com/gui/file/2148e815c365f50e5a6500838b6e729f2651d4c340dc8ab413fbfa3684aebecb/detection),
+כבו את האנטי וירוס או אשרו את ההתראה לכשתבוא.
 
 
 
