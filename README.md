@@ -43,7 +43,9 @@ python -m PyInstaller
 
 
 עבור החשדנים:
-MD5: af06f271e0b1819d5fad85c2de2fbd9e52c60bcfdc91fabe310069f705853970
-[virus total](https://www.virustotal.com/gui/file/af06f271e0b1819d5fad85c2de2fbd9e52c60bcfdc91fabe310069f705853970?nocache=1)
 
-<img width="360" height="420" alt="image" src="https://github.com/user-attachments/assets/e6af9683-b644-43b9-b988-33e210ea6d4d" />
+י MD5: af06f271e0b1819d5fad85c2de2fbd9e52c60bcfdc91fabe310069f705853970
+
+י[virus total](https://www.virustotal.com/gui/file/af06f271e0b1819d5fad85c2de2fbd9e52c60bcfdc91fabe310069f705853970?nocache=1)
+
+
